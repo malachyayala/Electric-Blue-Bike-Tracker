@@ -6,25 +6,10 @@ import json
 import datetime
 import threading # To run blocking tasks without freezing the GUI
 import queue      # To communicate between threads
+import os         # <-- Added for file path operations
 
-# --- Default Configuration (will be loaded into GUI) ---
-DEFAULT_MORNING_STATION_IDS = [
-    'bd1755dc-f26c-420e-85b3-fd025d0b5445', # Forsyth St at Huntington Ave
-    '2438d052-2cd6-4fba-83c9-39f46cb59398', # Parker St at Huntington Ave
-    'f834662c-0de8-11e7-991c-3863bb43a7d0', # NEU Parking Lot
-    'f83483f3-0de8-11e7-991c-3863bb43a7d0', # Christian Science Plaza
-    'f8350be5-0de8-11e7-991c-3863bb43a7d0', # Wentworth Institute of Technology
-    '5018e851-f2f3-4e18-9914-c316bbcc2c3d', # Huntington Ave at Mass Art
-]
-
-DEFAULT_AFTERNOON_STATION_IDS = [
-    "f834a67b-0de8-11e7-991c-3863bb43a7d0", # HLS @ Mass Ave / Jarvis St
-    'f834ba08-0de8-11e7-991c-3863bb43a7d0', # Harvard University / SEAS
-    'f834b652-0de8-11e7-991c-3863bb43a7d0', # Harvard University / Radcliffe Quadrangle
-    '800bde2c-51df-497c-ac2d-bc3a8c00c164', # Church St
-    'f83497b9-0de8-11e7-991c-3863bb43a7d0', # Harvard Square at Dunster
-    'f8349745-0de8-11e7-991c-3863bb43a7d0', # Harvard Square at Brattle St
-]
+# --- Config Filename ---
+CONFIG_FILENAME = "myconfig.json" # <-- Added constant
 
 # --- Default Pushover (Replace with yours or enter in GUI) ---
 DEFAULT_PUSHOVER_TOKEN = "ac8yskdsnj3s1u6q41eptud4nncysj" # Replace if desired
@@ -101,12 +86,12 @@ class BluebikesTrackerApp:
         tk.Label(pushover_frame, text="API Token/Key:").grid(row=0, column=0, sticky="w", padx=2)
         self.pushover_token_entry = tk.Entry(pushover_frame, width=40)
         self.pushover_token_entry.grid(row=0, column=1, sticky="ew", padx=2)
-        self.pushover_token_entry.insert(0, DEFAULT_PUSHOVER_TOKEN)
+        # Value will be set by load_configuration
 
         tk.Label(pushover_frame, text="User Key:").grid(row=1, column=0, sticky="w", padx=2)
         self.pushover_user_key_entry = tk.Entry(pushover_frame, width=40)
         self.pushover_user_key_entry.grid(row=1, column=1, sticky="ew", padx=2)
-        self.pushover_user_key_entry.insert(0, DEFAULT_PUSHOVER_USER_KEY)
+        # Value will be set by load_configuration
 
         # Station IDs
         stations_frame = tk.Frame(config_inner_frame)
@@ -122,7 +107,7 @@ class BluebikesTrackerApp:
         morning_frame.columnconfigure(0, weight=1)
         self.morning_stations_text = scrolledtext.ScrolledText(morning_frame, wrap=tk.WORD, height=8, width=40)
         self.morning_stations_text.grid(row=0, column=0, sticky="nsew")
-        self.morning_stations_text.insert(tk.END, "\n".join(DEFAULT_MORNING_STATION_IDS))
+        # Value will be set by load_configuration
 
         # Afternoon Stations
         afternoon_frame = tk.LabelFrame(stations_frame, text=f"Afternoon Stations ({AFTERNOON_START_HOUR:02d}:00 - {AFTERNOON_END_HOUR:02d}:00)", padx=5, pady=5, font=self.bold_font)
@@ -131,11 +116,22 @@ class BluebikesTrackerApp:
         afternoon_frame.columnconfigure(0, weight=1)
         self.afternoon_stations_text = scrolledtext.ScrolledText(afternoon_frame, wrap=tk.WORD, height=8, width=40)
         self.afternoon_stations_text.grid(row=0, column=0, sticky="nsew")
-        self.afternoon_stations_text.insert(tk.END, "\n".join(DEFAULT_AFTERNOON_STATION_IDS))
+        # Value will be set by load_configuration
 
         stations_frame.columnconfigure(0, weight=1)
         stations_frame.columnconfigure(1, weight=1)
         stations_frame.rowconfigure(0, weight=1)
+
+        # --- Log Widgets (Needed for load_configuration logging) ---
+        log_inner_frame = tk.Frame(self.log_frame)
+        log_inner_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        tk.Label(log_inner_frame, text="Logs:", font=self.bold_font).pack(anchor="w")
+        self.log_area = scrolledtext.ScrolledText(log_inner_frame, wrap=tk.WORD, height=15, state=tk.DISABLED) # Start disabled
+        self.log_area.pack(fill=tk.BOTH, expand=True, pady=(0,5))
+
+        # --- Load Configuration ---
+        self.load_configuration() # Try loading saved config before setting defaults
 
         # --- Control Widgets ---
         controls_inner_frame = tk.Frame(self.controls_frame)
@@ -147,16 +143,13 @@ class BluebikesTrackerApp:
         self.stop_button = tk.Button(controls_inner_frame, text="Stop Tracking", command=self.stop_tracking, width=15, height=2, bg="#f44336", fg="white", state=tk.DISABLED, font=self.bold_font)
         self.stop_button.grid(row=0, column=1, padx=10)
 
-        self.status_label = tk.Label(controls_inner_frame, text="Status: Idle", fg="blue", width=40, anchor="w")
-        self.status_label.grid(row=0, column=2, padx=15, sticky="w")
+        # Added Save Button
+        self.save_button = tk.Button(controls_inner_frame, text="Save Config", command=self.save_configuration, width=12, height=2)
+        self.save_button.grid(row=0, column=2, padx=10)
 
-        # --- Log Widgets ---
-        log_inner_frame = tk.Frame(self.log_frame)
-        log_inner_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.status_label = tk.Label(controls_inner_frame, text="Status: Idle", fg="blue", width=35, anchor="w") # Adjusted width slightly
+        self.status_label.grid(row=0, column=3, padx=15, sticky="w") # Adjusted column
 
-        tk.Label(log_inner_frame, text="Logs:", font=self.bold_font).pack(anchor="w")
-        self.log_area = scrolledtext.ScrolledText(log_inner_frame, wrap=tk.WORD, height=15, state=tk.DISABLED) # Start disabled
-        self.log_area.pack(fill=tk.BOTH, expand=True, pady=(0,5))
 
         # --- Start processing the queue ---
         self.master.after(100, self.process_queue) # Check queue every 100ms
@@ -167,13 +160,23 @@ class BluebikesTrackerApp:
 
     def log_message(self, message, level="INFO"):
         """Appends a message to the log area."""
+        # Ensure log_area exists before trying to write (during early init)
+        if not hasattr(self, 'log_area') or not self.log_area:
+            print(f"[PRE-LOG] {level}: {message}") # Fallback print
+            return
+
         timestamp = time.strftime('%H:%M:%S')
         formatted_message = f"[{timestamp} {level}] {message}\n"
 
-        self.log_area.config(state=tk.NORMAL) # Enable writing
-        self.log_area.insert(tk.END, formatted_message)
-        self.log_area.see(tk.END) # Scroll to the end
-        self.log_area.config(state=tk.DISABLED) # Disable writing
+        try:
+            self.log_area.config(state=tk.NORMAL) # Enable writing
+            self.log_area.insert(tk.END, formatted_message)
+            self.log_area.see(tk.END) # Scroll to the end
+            self.log_area.config(state=tk.DISABLED) # Disable writing
+        except tk.TclError:
+            # Handle case where the widget might be destroyed during shutdown
+            print(f"[LOG-ERR] {level}: {message}")
+
 
     def update_status(self, status_text, color="blue"):
         """Updates the status label (excluding timer updates)."""
@@ -188,19 +191,92 @@ class BluebikesTrackerApp:
         ids = [line.strip() for line in raw_text.splitlines() if line.strip()]
         return ids
 
+    # --- NEW METHOD ---
+    def load_configuration(self):
+        """Loads configuration from CONFIG_FILENAME if it exists."""
+        loaded_config = {}
+        config_path = os.path.join(os.path.dirname(__file__), CONFIG_FILENAME) # Path relative to script
+
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    loaded_config = json.load(f)
+                self.log_message(f"Configuration loaded from {config_path}", "INFO")
+            except (json.JSONDecodeError, IOError) as e:
+                self.log_message(f"Error loading {config_path}: {e}. Using defaults.", "ERROR")
+                # Use messagebox only if GUI is fully initialized
+                if self.master.winfo_exists():
+                     messagebox.showerror("Config Load Error", f"Could not load configuration file '{CONFIG_FILENAME}'.\nError: {e}\n\nUsing default settings.")
+            except Exception as e: # Catch other potential errors
+                self.log_message(f"Unexpected error loading {config_path}: {e}", "ERROR")
+                if self.master.winfo_exists():
+                    messagebox.showerror("Config Load Error", f"An unexpected error occurred while loading '{CONFIG_FILENAME}'.\nError: {e}\n\nUsing default settings.")
+        else:
+            self.log_message(f"Configuration file '{CONFIG_FILENAME}' not found in script directory. Using defaults.", "INFO")
+
+        # Populate fields - Use loaded value OR default if key missing/load failed
+        # Ensure widgets exist before accessing them
+        if hasattr(self, 'pushover_token_entry'):
+            self.pushover_token_entry.delete(0, tk.END)
+            self.pushover_token_entry.insert(0, loaded_config.get("pushover_token", DEFAULT_PUSHOVER_TOKEN))
+
+        if hasattr(self, 'pushover_user_key_entry'):
+            self.pushover_user_key_entry.delete(0, tk.END)
+            self.pushover_user_key_entry.insert(0, loaded_config.get("pushover_user_key", DEFAULT_PUSHOVER_USER_KEY))
+
+        if hasattr(self, 'morning_stations_text'):
+            self.morning_stations_text.delete("1.0", tk.END)
+            morning_ids = loaded_config.get("morning_station_ids")
+            self.morning_stations_text.insert(tk.END, "\n".join(morning_ids))
+
+        if hasattr(self, 'afternoon_stations_text'):
+            self.afternoon_stations_text.delete("1.0", tk.END)
+            afternoon_ids = loaded_config.get("afternoon_station_ids")
+            self.afternoon_stations_text.insert(tk.END, "\n".join(afternoon_ids))
+
+    # --- NEW METHOD ---
+    def save_configuration(self):
+        """Saves the current configuration to CONFIG_FILENAME."""
+        config_data = {
+            "pushover_token": self.pushover_token_entry.get().strip(),
+            "pushover_user_key": self.pushover_user_key_entry.get().strip(),
+            "morning_station_ids": self.get_station_ids_from_text(self.morning_stations_text),
+            "afternoon_station_ids": self.get_station_ids_from_text(self.afternoon_stations_text)
+        }
+        config_path = os.path.join(os.path.dirname(__file__), CONFIG_FILENAME) # Path relative to script
+
+        try:
+            with open(config_path, 'w') as f:
+                json.dump(config_data, f, indent=4)
+            self.log_message(f"Configuration saved to {config_path}", "INFO")
+            messagebox.showinfo("Config Saved", f"Configuration successfully saved to:\n{config_path}")
+        except IOError as e:
+            self.log_message(f"Error saving configuration to {config_path}: {e}", "ERROR")
+            messagebox.showerror("Config Save Error", f"Could not save configuration file '{CONFIG_FILENAME}'.\nError: {e}")
+        except Exception as e: # Catch other potential errors
+            self.log_message(f"Unexpected error saving {config_path}: {e}", "ERROR")
+            messagebox.showerror("Config Save Error", f"An unexpected error occurred while saving '{CONFIG_FILENAME}'.\nError: {e}")
+
+
     def start_tracking(self):
         """Starts the tracking process in a separate thread."""
         if self.tracking_active:
             messagebox.showwarning("Already Running", "Tracking is already active.")
             return
 
+        # Read current values from GUI for this run
         self.pushover_token = self.pushover_token_entry.get().strip()
         self.pushover_user_key = self.pushover_user_key_entry.get().strip()
 
         if not self.pushover_token or self.pushover_token == "YOUR_APP_API_TOKEN_HERE" or \
            not self.pushover_user_key or self.pushover_user_key == "YOUR_USER_KEY_HERE":
-            if not messagebox.askyesno("Pushover Warning", "Pushover credentials seem missing or are defaults. Notifications will likely fail. Continue anyway?"):
-                return
+             # Check against default values stored in the entry after loading
+             default_token_in_entry = self.pushover_token_entry.get().strip() == DEFAULT_PUSHOVER_TOKEN
+             default_user_in_entry = self.pushover_user_key_entry.get().strip() == DEFAULT_PUSHOVER_USER_KEY
+             if default_token_in_entry or default_user_in_entry:
+                if not messagebox.askyesno("Pushover Warning", "Pushover credentials seem missing or are defaults. Notifications will likely fail. Continue anyway?"):
+                    return
+             # Allow empty keys if user explicitly cleared them and proceeded
 
         # --- Determine which stations to track based on current time ---
         current_hour = datetime.datetime.now().hour
@@ -237,6 +313,7 @@ class BluebikesTrackerApp:
 
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
+        self.save_button.config(state=tk.DISABLED) # Disable save while running
         self.update_countdown_timer()
 
         # Start the background thread
@@ -261,6 +338,7 @@ class BluebikesTrackerApp:
 
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
+        self.save_button.config(state=tk.NORMAL) # Re-enable save button
         self.update_status(reason, "red")
 
     def update_countdown_timer(self):
@@ -278,6 +356,7 @@ class BluebikesTrackerApp:
             self.status_label.config(text=status_text, fg="darkgreen")
             self.timer_update_id = self.master.after(1000, self.update_countdown_timer)
         else:
+            # Timer reached zero, but let the thread handle the actual stop logic
             if self.tracking_active:
                  self.status_label.config(text=f"Status: Running ({self.tracking_mode} Mode) - 00:00 left", fg="darkgreen")
             self.timer_update_id = None
@@ -302,12 +381,14 @@ class BluebikesTrackerApp:
             while not self.stop_event.is_set():
                 loop_start_time = time.time()
 
+                # Check runtime limit FIRST
                 elapsed_time = loop_start_time - self.start_time
-                if elapsed_time > self.run_duration_seconds:
+                if elapsed_time >= self.run_duration_seconds: # Use >= for safety
                     self.result_queue.put(("log", f"Runtime limit ({RUN_DURATION_MINUTES} minutes) reached."))
                     self.result_queue.put(("stop", "Runtime Ended"))
-                    break
+                    break # Exit loop immediately
 
+                # --- Fetch and Process Status ---
                 try:
                     status_url = STATION_STATUS_URL
                     response = requests.get(status_url, timeout=20)
@@ -323,6 +404,7 @@ class BluebikesTrackerApp:
 
                     for station_id in self.current_station_ids_to_track:
                         station_status = stations_status_dict.get(station_id)
+                        # Use previously fetched station_names map
                         station_name = self.station_names.get(station_id, f"Unknown ({station_id[:6]}...)")
 
                         if station_status:
@@ -346,6 +428,7 @@ class BluebikesTrackerApp:
                             current_log_lines.append(log_line)
                             status_lines_for_notification.append(f"{station_name}: {ebikes} E, {classic_bikes} C, {docks} D")
 
+                            # Check against previous status for *this* station
                             had_ebikes_before = self.previous_ebike_status.get(station_id, False)
                             if has_ebikes_now and not had_ebikes_before:
                                 notification_needed = True
@@ -353,29 +436,33 @@ class BluebikesTrackerApp:
                                     triggering_station_names.append(station_name)
                                 current_log_lines.append(f"*** E-bike detected at {station_name}! (Will include in summary notification) ***")
 
-                        else:
+                        else: # Station ID tracked but not found in current status feed
                             log_line = f"Station: {station_name}\n" \
                                        f"  Status not currently available in API feed.\n" \
                                        f"-------------------------"
                             current_log_lines.append(log_line)
                             status_lines_for_notification.append(f"{station_name}: Status N/A")
-                            current_ebike_status[station_id] = False
+                            current_ebike_status[station_id] = False # Assume no e-bikes if status missing
 
+                    # Send log update for this cycle
                     self.result_queue.put(("log", "\n".join(current_log_lines)))
 
+                    # Send notification if needed (after processing all stations for this cycle)
                     if notification_needed:
                         notification_title = f"E-Bike Alert!"
                         notification_message = f"E-bike(s) detected at {', '.join(triggering_station_names)}!\n\nFull Status:\n" + "\n".join(status_lines_for_notification)
                         self.result_queue.put(("log", f"--- Sending Pushover Notification (Triggered by: {', '.join(triggering_station_names)}) ---", "IMPORTANT"))
+                        # Send Pushover in this thread
                         success = self._send_pushover_notification_thread(notification_message, title=notification_title)
                         if success:
                              self.result_queue.put(("log", f"Pushover notification sent successfully."))
                         else:
                              self.result_queue.put(("log", f"Failed to send Pushover notification.", "ERROR"))
 
-
+                    # Update the master previous status dict for the next cycle
                     self.previous_ebike_status = current_ebike_status.copy()
 
+                    # Clean up stale entries (should not happen if current_station_ids_to_track is static during run)
                     stale_ids = [s_id for s_id in self.previous_ebike_status if s_id not in self.current_station_ids_to_track]
                     for s_id in stale_ids:
                         del self.previous_ebike_status[s_id]
@@ -388,19 +475,27 @@ class BluebikesTrackerApp:
                     self.result_queue.put(("log", f"Network/Request Error fetching status: {e}", "ERROR"))
                 except (json.JSONDecodeError, KeyError) as e:
                     self.result_queue.put(("log", f"Error processing station status data: {e}", "ERROR"))
-                except Exception as e:
+                except Exception as e: # Catch unexpected errors in loop
                      self.result_queue.put(("log", f"An unexpected error occurred in tracking loop: {e}", "ERROR"))
 
 
+                # --- Wait before next check ---
+                # Calculate wait time, ensuring it's not negative
                 wait_actual = max(0, CHECK_INTERVAL_SECONDS - (time.time() - loop_start_time))
-                self.stop_event.wait(timeout=wait_actual)
+                # Use stop_event.wait for interruptible sleep
+                # This will wait for 'wait_actual' seconds OR until stop_event is set
+                interrupted = self.stop_event.wait(timeout=wait_actual)
+                if interrupted: # If stop_event was set during wait
+                    break # Exit the loop immediately
 
-        except Exception as e:
+
+        except Exception as e: # Catch errors happening outside the main loop but inside the thread
             self.result_queue.put(("log", f"Critical error in tracking thread: {e}", "ERROR"))
             self.result_queue.put(("stop", "Thread Error"))
 
+        # Final message only if thread finishes *without* being stopped by event
         if not self.stop_event.is_set():
-             self.result_queue.put(("log", "--- Tracking Thread Finished ---"))
+             self.result_queue.put(("log", "--- Tracking Thread Finished Naturally (Should have been stopped by timer/manual) ---", "WARNING"))
 
 
     def _get_station_name_map_thread(self):
@@ -414,18 +509,19 @@ class BluebikesTrackerApp:
         except requests.exceptions.RequestException as e:
             self.result_queue.put(("log", f"Error fetching station information: {e}", "ERROR"))
             return None
-        except (json.JSONDecodeError, KeyError) as e:
-            self.result_queue.put(("log", f"Error processing station information: {e}", "ERROR"))
+        except (json.JSONDecodeError, KeyError) as e: # More specific JSON errors
+            self.result_queue.put(("log", f"Error processing station information JSON: {e}", "ERROR"))
             return None
-        except Exception as e:
+        except Exception as e: # Catch other unexpected errors
             self.result_queue.put(("log", f"Unexpected error fetching station names: {e}", "ERROR"))
             return None
 
 
     def _send_pushover_notification_thread(self, message, title="Bluebikes E-Bike Alert"):
         """Sends a notification message using Pushover (intended for background thread)."""
+        # Use the token/key read at the start of tracking
         if not self.pushover_user_key or not self.pushover_token:
-            self.result_queue.put(("log", "Pushover credentials missing. Skipping notification.", "WARNING"))
+            self.result_queue.put(("log", "Pushover credentials missing for this run. Skipping notification.", "WARNING"))
             return False
 
         payload = {
@@ -433,27 +529,33 @@ class BluebikesTrackerApp:
             "user": self.pushover_user_key,
             "message": message,
             "title": title
+            # Add other parameters like sound, priority if needed
+            # "sound": "pushover",
+            # "priority": 0,
         }
         headers = {"Content-type": "application/x-www-form-urlencoded"}
 
         try:
             response = requests.post(PUSHOVER_API_URL, data=payload, headers=headers, timeout=15)
             response.raise_for_status()
+            # Success will be logged by the caller via the queue
             return True
         except requests.exceptions.RequestException as e:
+            # Log failure via queue
             error_msg = f"Error sending Pushover notification: {e}"
             if e.response is not None:
+                 # Include status code and snippet of response text for debugging
                  error_msg += f" (Status: {e.response.status_code}, Response: {e.response.text[:100]}...)"
             self.result_queue.put(("log", error_msg, "ERROR"))
             return False
-        except Exception as e:
+        except Exception as e: # Catch other unexpected errors
              self.result_queue.put(("log", f"An unexpected error occurred sending Pushover notification: {e}", "ERROR"))
              return False
 
     def process_queue(self):
         """Processes messages put in the queue by the background thread."""
         try:
-            while True:
+            while True: # Process all waiting messages in the queue
                 msg_type, *payload = self.result_queue.get_nowait()
 
                 if msg_type == "log":
@@ -461,19 +563,25 @@ class BluebikesTrackerApp:
                     self.log_message(message, level=level)
                 elif msg_type == "stop":
                     reason = payload[0] if payload else "Stopped by Thread"
-                    if self.tracking_active: # Check if tracking was active before stopping
+                    # Only call stop_tracking if it's currently considered active
+                    # This prevents race conditions or double-stops
+                    if self.tracking_active:
                         self.stop_tracking(reason=reason)
-                        # Check if the reason for stopping was the timer ending
-                        if reason == "Runtime Ended":
-                            self.log_message("Timer ended. Closing application.", "INFO")
-                            # Give a brief moment for UI updates before destroying
-                            self.master.after(100, self.master.destroy)
-                            return # Exit processing as the window will close
+                        # Optional: Auto-close logic (kept from previous version)
+                        # if reason == "Runtime Ended":
+                        #    self.log_message("Timer ended. Closing application.", "INFO")
+                        #    self.master.after(100, self.master.destroy)
+                        #    return # Exit processing as the window will close
 
         except queue.Empty:
+            # No messages left in the queue for now
             pass
+        except Exception as e:
+             # Catch potential errors during queue processing itself
+             self.log_message(f"Error processing queue: {e}", "ERROR")
         finally:
-            # Ensure the after call is only scheduled if the window isn't being destroyed
+            # Reschedule processing ONLY if the window still exists
+            # This prevents errors after the window is destroyed
             if self.master.winfo_exists():
                  self.master.after(100, self.process_queue)
 
@@ -483,15 +591,23 @@ class BluebikesTrackerApp:
         if self.tracking_active:
             if messagebox.askyesno("Quit", "Tracking is active. Are you sure you want to quit? This will stop the tracking."):
                 self.stop_tracking("Application Closed")
+                # Give a very short time for the stop signal to potentially be processed
+                # Note: Daemon thread might still be running briefly but should exit eventually
                 time.sleep(0.1)
                 self.master.destroy()
             else:
-                return
+                return # Don't close if user clicks No
         else:
-            self.master.destroy()
+            self.master.destroy() # Close immediately if not tracking
 
 # --- Main Execution ---
 if __name__ == "__main__":
+    # Set script path context for finding config file relative to script
+    # This helps if running from a different working directory
+    # (Not strictly necessary if always running from script's dir, but safer)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir) # Change working directory to script's directory
+
     root = tk.Tk()
     app = BluebikesTrackerApp(root)
     root.mainloop()
