@@ -1,0 +1,8 @@
+{
+    "pushover_token": "PUSHOVER_TOKEN",
+    "pushover_user_key": "PUSHOVER_USER_KEY",
+    "morning_station_ids": [
+    ],
+    "afternoon_station_ids": [
+    ]
+}
