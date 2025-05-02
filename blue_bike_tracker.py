@@ -11,9 +11,6 @@ import os         # <-- Added for file path operations
 # --- Config Filename ---
 CONFIG_FILENAME = "myconfig.json" # <-- Added constant
 
-# --- Default Pushover (Replace with yours or enter in GUI) ---
-DEFAULT_PUSHOVER_TOKEN = "ac8yskdsnj3s1u6q41eptud4nncysj" # Replace if desired
-DEFAULT_PUSHOVER_USER_KEY = "ujpidngha6jfp3ottrcfzkbxxw7j34"     # Replace if desired
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 
 # --- Time Window Defaults (can be adjusted here) ---
@@ -21,7 +18,7 @@ MORNING_START_HOUR = 8
 MORNING_END_HOUR = 12
 AFTERNOON_START_HOUR = 16
 AFTERNOON_END_HOUR = 19
-CHECK_INTERVAL_SECONDS = 30 # How often to check status
+CHECK_INTERVAL_SECONDS = 15 # How often to check status
 RUN_DURATION_MINUTES = 30   # How long to run after starting
 
 # --- API URLs ---
@@ -166,7 +163,8 @@ class BluebikesTrackerApp:
             return
 
         timestamp = time.strftime('%H:%M:%S')
-        formatted_message = f"[{timestamp} {level}] {message}\n"
+        # Changed format to put timestamp at the end
+        formatted_message = f"[{level}] {message} [{timestamp}]\n"
 
         try:
             self.log_area.config(state=tk.NORMAL) # Enable writing
@@ -218,11 +216,11 @@ class BluebikesTrackerApp:
         # Ensure widgets exist before accessing them
         if hasattr(self, 'pushover_token_entry'):
             self.pushover_token_entry.delete(0, tk.END)
-            self.pushover_token_entry.insert(0, loaded_config.get("pushover_token", DEFAULT_PUSHOVER_TOKEN))
+            self.pushover_token_entry.insert(0, loaded_config.get("pushover_token"))
 
         if hasattr(self, 'pushover_user_key_entry'):
             self.pushover_user_key_entry.delete(0, tk.END)
-            self.pushover_user_key_entry.insert(0, loaded_config.get("pushover_user_key", DEFAULT_PUSHOVER_USER_KEY))
+            self.pushover_user_key_entry.insert(0, loaded_config.get("pushover_user_key"))
 
         if hasattr(self, 'morning_stations_text'):
             self.morning_stations_text.delete("1.0", tk.END)
@@ -600,14 +598,28 @@ class BluebikesTrackerApp:
         else:
             self.master.destroy() # Close immediately if not tracking
 
+    def check_and_close_if_not_tracking(self):
+        """Checks if tracking started; closes the app if not."""
+        # Check if tracking is still not active after the delay
+        if not self.tracking_active:
+            print("Tracking did not start within the time limit. Closing application.") # Print to console as GUI might close immediately
+            self.master.destroy() # Close the Tkinter window
+
 # --- Main Execution ---
 if __name__ == "__main__":
     # Set script path context for finding config file relative to script
-    # This helps if running from a different working directory
-    # (Not strictly necessary if always running from script's dir, but safer)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir) # Change working directory to script's directory
 
     root = tk.Tk()
     app = BluebikesTrackerApp(root)
+
+    # --- Automatically start tracking ---
+    # Schedule start_tracking to run shortly after the main loop starts
+    root.after(100, app.start_tracking)
+
+    # --- Schedule check to close if tracking doesn't start ---
+    # Check after 10 seconds (10000 milliseconds)
+    root.after(10000, app.check_and_close_if_not_tracking)
+
     root.mainloop()
