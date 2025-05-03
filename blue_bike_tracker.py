@@ -10,7 +10,6 @@ import os         # <-- Added for file path operations
 
 # --- Config Filename ---
 CONFIG_FILENAME = "myconfig.json" # <-- Added constant
-
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 
 # --- Time Window Defaults (can be adjusted here) ---
